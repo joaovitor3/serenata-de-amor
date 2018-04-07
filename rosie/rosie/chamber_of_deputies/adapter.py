@@ -1,10 +1,12 @@
 import os
+from datetime import date
 
 import numpy as np
 import pandas as pd
 
-from serenata_toolbox.chamber_of_deputies.dataset import Dataset
+from serenata_toolbox.chamber_of_deputies.reimbursements import Reimbursements
 from serenata_toolbox.datasets import fetch
+
 
 COLUMNS = {
     'category': 'subquota_description',
@@ -12,13 +14,20 @@ COLUMNS = {
     'recipient_id': 'cnpj_cpf',
     'recipient': 'supplier',
 }
+DTYPE = {
+    'applicant_id': np.str,
+    'cnpj_cpf': np.str,
+    'congressperson_id': np.str,
+    'subquota_number': np.str
+}
 
 
 class Adapter:
     COMPANIES_DATASET = '2016-09-03-companies.xz'
 
     def __init__(self, path):
-        self.path = path
+        self.path = path  # directory in which datasets are saved
+        self._paths = None  # reimbursement datasets by year
 
     @property
     def dataset(self):
@@ -61,22 +70,21 @@ class Adapter:
         self._dataset['is_party_expense'] = \
             self._dataset['congressperson_id'].isnull()
 
-    def update_datasets(self):
+    def update_datasets(self, years=None):
         os.makedirs(self.path, exist_ok=True)
-        chamber_of_deputies = Dataset(self.path)
-        chamber_of_deputies.fetch()
-        chamber_of_deputies.translate()
-        chamber_of_deputies.clean()
-        fetch(self.COMPANIES_DATASET, self.path)
+        if not years:
+            next_year = date.today().year + 1
+            years = range(2009, next_year)
 
-    def get_reimbursements(self):
-        path = os.path.join(self.path, 'reimbursements.xz')
-        self._dataset = pd.read_csv(path,
-                                    dtype={'applicant_id': np.str,
-                                           'cnpj_cpf': np.str,
-                                           'congressperson_id': np.str,
-                                           'subquota_number': np.str},
-                                    low_memory=False)
+        fetch(self.COMPANIES_DATASET, self.path)
+        self._paths = tuple(Reimbursements(str(y), self.path) for y in years)
+
+    def get_reimbursements(self, years=None):
+        self._dataset = pd.DataFrame()
+        for path in self._paths:
+            df = pd.read_csv(path, dtype=DTYPE, low_memory=False)
+            self._dataset = pd.concat(self._dataset, df)
+
         self._dataset['issue_date'] = pd.to_datetime(
             self._dataset['issue_date'], errors='coerce')
         return self._dataset
